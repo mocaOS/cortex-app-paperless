@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+/*
+ * Cortex design tokens — "Bold Typography" design language.
+ * Full spec: https://cortexskills.org/cortex-design/SKILL.md
+ * Rules of thumb: no rounded corners, no drop shadows, dark-first,
+ * accent used sparingly, 1px low-opacity borders for depth.
+ */
+@theme {
+  --color-bg: #0a0a0a;
+  --color-fg: #fafafa;
+  --color-muted: #a3a3a3;
+  --color-faint: #525252;
+  --color-accent: #ff9500;
+  --color-line: rgb(255 255 255 / 0.12);
+  --color-card: rgb(255 255 255 / 0.03);
+
+  --font-sans: "Inter", "Inter Tight", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+
+  --tracking-tighter: -0.06em;
+  --tracking-tight: -0.04em;
+  --tracking-body: -0.01em;
+  --tracking-label: 0.2em;
+
+  --radius-*: initial; /* sharpness over softness: no rounded corners */
+}
+
+html {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  letter-spacing: var(--tracking-body);
+}
+
+::selection {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}

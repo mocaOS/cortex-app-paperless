@@ -1,0 +1,50 @@
+{
+  "$schema": "./schema/app.v1.json",
+  "id": "paperless-sync",
+  "name": "Paperless Sync",
+  "version": "0.2.0",
+  "type": "platform",
+  "description": "Sync your paperless-ngx document archive into the Cortex knowledge graph",
+  "publisher": {
+    "name": "reneil",
+    "url": "https://github.com/mocaOS"
+  },
+  "icon": "icon.svg",
+  "entry": "index.html",
+  "cortex": {
+    "minVersion": "2.0.0",
+    "keyScope": "read_write",
+    "endpoints": [
+      "upload",
+      "documents",
+      "collections"
+    ],
+    "collections": "all"
+  },
+  "config": [
+    {
+      "name": "PAPERLESS_BASE_URL",
+      "type": "text",
+      "required": true,
+      "description": "Base URL of your paperless-ngx instance, e.g. https://paperless.example.com"
+    },
+    {
+      "name": "PAPERLESS_TOKEN",
+      "type": "secret",
+      "required": true,
+      "auth_header": "Authorization: Token PAPERLESS_TOKEN",
+      "description": "paperless-ngx API token (My Profile -> API Token). Stored encrypted, injected server-side."
+    }
+  ],
+  "sharing": {
+    "links": false
+  },
+  "users": false,
+  "capabilities": {
+    "http": {
+      "hosts": [
+        "${PAPERLESS_BASE_URL}"
+      ]
+    }
+  }
+}
