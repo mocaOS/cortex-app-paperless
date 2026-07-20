@@ -1,56 +1,79 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listCollections, type CortexCollection } from "../lib/cortex";
-import { listAllDocuments, loadNameMaps } from "../lib/paperless";
 import {
-  loadSyncedFilenames,
-  runSync,
-  syncFilename,
-  type SyncItem,
-  type SyncState,
-} from "../lib/sync";
+  deleteTask,
+  getTask,
+  listTasks,
+  submitTask,
+  taskAction,
+  type TaskDetail,
+  type TaskItem,
+} from "../lib/platform";
+import {
+  buildSyncTask,
+  loadPrefs,
+  savePrefs,
+  seedDedupKeysOnce,
+  SYNC_TASK_NAME,
+} from "../lib/syncTask";
 
-const BADGE: Record<SyncState, { label: string; cls: string }> = {
-  pending: { label: "pending", cls: "text-[--color-faint]" },
-  syncing: { label: "syncing…", cls: "text-[--color-accent]" },
-  done: { label: "synced", cls: "text-emerald-400" },
-  skipped: { label: "in cortex", cls: "text-[--color-muted]" },
-  error: { label: "error", cls: "text-red-400" },
+const SCHEDULES: Array<{ label: string; minutes?: number }> = [
+  { label: "manual only" },
+  { label: "every hour", minutes: 60 },
+  { label: "every 6 hours", minutes: 360 },
+  { label: "daily", minutes: 1440 },
+];
+
+const STATUS_CLS: Record<string, string> = {
+  running: "text-[--color-accent]",
+  pending: "text-[--color-accent]",
+  paused: "text-amber-400",
+  completed: "text-emerald-400",
+  failed: "text-red-400",
+  cancelled: "text-[--color-muted]",
 };
 
-export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
-  const [items, setItems] = useState<SyncItem[]>([]);
-  const [collections, setCollections] = useState<CortexCollection[]>([]);
-  const [collectionId, setCollectionId] = useState<string>("");
-  const [names, setNames] = useState<Awaited<ReturnType<typeof loadNameMaps>> | null>(null);
-  const [synced, setSynced] = useState<Set<string> | null>(null);
-  const [loading, setLoading] = useState<string | null>("loading documents…");
-  const [error, setError] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
-  const stopRef = useRef(false);
+const ACTIVE = new Set(["running", "pending"]);
 
+export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
+  const [task, setTask] = useState<TaskDetail | null>(null);
+  const [collections, setCollections] = useState<CortexCollection[]>([]);
+  const [collectionId, setCollectionId] = useState("");
+  const [scheduleMinutes, setScheduleMinutes] = useState<number | undefined>(undefined);
+  const [loading, setLoading] = useState<string | null>("loading…");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const pollRef = useRef<number | null>(null);
+
+  const refresh = useCallback(async (): Promise<TaskDetail | null> => {
+    const tasks = await listTasks();
+    const managed = tasks.find((t) => t.name === SYNC_TASK_NAME);
+    if (!managed) {
+      setTask(null);
+      return null;
+    }
+    const detail = await getTask(managed.task_id);
+    setTask(detail);
+    return detail;
+  }, []);
+
+  // initial load: prefs + collections + existing task + one-time dedup seed
+  // (documents synced by the pre-task version of this app are recognized via
+  // their filenames and marked in storage so they're never re-uploaded)
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        setLoading("loading paperless documents…");
-        const [docs, nameMaps, syncedSet, cols] = await Promise.all([
-          listAllDocuments(baseUrl, (n, total) =>
-            setLoading(`loading paperless documents… ${n}/${total}`),
-          ),
-          loadNameMaps(baseUrl),
-          loadSyncedFilenames(),
+        const [prefs, cols] = await Promise.all([
+          loadPrefs(),
           listCollections().catch(() => [] as CortexCollection[]),
         ]);
+        await seedDedupKeysOnce();
         if (cancelled) return;
-        setItems(
-          docs.map((doc) => ({
-            doc,
-            state: syncedSet.has(syncFilename(doc)) ? "skipped" : "pending",
-          })),
-        );
-        setNames(nameMaps);
-        setSynced(syncedSet);
         setCollections(cols);
+        setCollectionId(prefs.collectionId ?? "");
+        setScheduleMinutes(prefs.everyMinutes);
+        await refresh();
         setLoading(null);
       } catch (err) {
         if (!cancelled) {
@@ -62,129 +85,249 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
     return () => {
       cancelled = true;
     };
-  }, [baseUrl]);
+  }, [refresh]);
 
-  const counts = useMemo(() => {
-    const c = { pending: 0, syncing: 0, done: 0, skipped: 0, error: 0 };
-    for (const item of items) c[item.state] += 1;
-    return c;
-  }, [items]);
+  // poll while a run is active
+  useEffect(() => {
+    if (!task || !ACTIVE.has(task.status)) return;
+    pollRef.current = window.setTimeout(() => {
+      void refresh().catch(() => undefined);
+    }, 2500);
+    return () => {
+      if (pollRef.current) window.clearTimeout(pollRef.current);
+    };
+  }, [task, refresh]);
 
-  async function startSync() {
-    if (running || !names || !synced) return;
-    stopRef.current = false;
-    setRunning(true);
-    const targets = items
-      .map((item, index) => ({ item, index }))
-      .filter(({ item }) => item.state === "pending" || item.state === "error");
-    setItems((prev) =>
-      prev.map((it) =>
-        it.state === "error" ? { ...it, state: "pending", detail: undefined } : it,
-      ),
-    );
-    await runSync(
-      baseUrl,
-      targets.map(({ item }) => item),
-      names,
-      synced,
-      {
+  async function withBusy(fn: () => Promise<unknown>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** (Re)submit the managed task with the current settings. Submitting always
+   * starts a run immediately, so this doubles as "sync now". */
+  function syncNow() {
+    void withBusy(async () => {
+      await savePrefs({
         collectionId: collectionId || undefined,
-        concurrency: 2,
-        shouldStop: () => stopRef.current,
-        onUpdate: (targetIdx, state, detail) => {
-          const realIndex = targets[targetIdx].index;
-          setItems((prev) =>
-            prev.map((it, i) => (i === realIndex ? { ...it, state, detail } : it)),
-          );
-        },
-      },
-    );
-    setRunning(false);
+        everyMinutes: scheduleMinutes,
+      });
+      const existing = task;
+      if (existing && ACTIVE.has(existing.status)) return; // already running
+      if (existing) await deleteTask(existing.task_id);
+      await submitTask(
+        buildSyncTask({
+          baseUrl,
+          collectionId: collectionId || undefined,
+          everyMinutes: scheduleMinutes,
+        }),
+      );
+    });
+  }
+
+  function act(action: "pause" | "resume" | "cancel" | "retryFailed") {
+    if (!task) return;
+    void withBusy(() => taskAction(task.task_id, action));
   }
 
   if (loading) {
-    return <p className="font-mono text-xs uppercase tracking-[0.1em] text-[--color-faint]">{loading}</p>;
-  }
-  if (error) {
-    return <p className="font-mono text-xs text-red-400">{error}</p>;
+    return (
+      <p className="font-mono text-xs uppercase tracking-[0.1em] text-[--color-faint]">
+        {loading}
+      </p>
+    );
   }
 
-  const toSync = counts.pending + counts.error;
+  const counts = task?.counts ?? {};
+  const active = task ? ACTIVE.has(task.status) : false;
+  const failedItems: TaskItem[] = (task?.items ?? []).filter((i) => i.status === "failed");
+  const skippedItems: TaskItem[] = (task?.items ?? []).filter((i) => i.status === "skipped");
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-4 border border-[--color-line] bg-[--color-card] p-4">
+      {/* controls */}
+      <div className="flex flex-wrap items-center gap-3 border border-[--color-line] bg-[--color-card] p-4">
         <span className="font-mono text-xs uppercase tracking-[0.2em] text-[--color-muted]">
-          {items.length} documents
+          Sync
         </span>
-        <span className="font-mono text-xs text-[--color-faint]">
-          {counts.skipped + counts.done} in cortex · {toSync} to sync
-          {counts.error > 0 && <span className="text-red-400"> · {counts.error} failed</span>}
-        </span>
+        <select
+          value={scheduleMinutes ?? ""}
+          onChange={(e) =>
+            setScheduleMinutes(e.target.value ? Number(e.target.value) : undefined)
+          }
+          disabled={busy || active}
+          className="border border-[--color-line] bg-[--color-bg] px-3 py-2 font-mono text-xs outline-none focus:border-[--color-accent]"
+        >
+          {SCHEDULES.map((s) => (
+            <option key={s.label} value={s.minutes ?? ""}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        {collections.length > 0 && (
+          <select
+            value={collectionId}
+            onChange={(e) => setCollectionId(e.target.value)}
+            disabled={busy || active}
+            className="border border-[--color-line] bg-[--color-bg] px-3 py-2 font-mono text-xs outline-none focus:border-[--color-accent]"
+          >
+            <option value="">default collection</option>
+            {collections.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name ?? c.id}
+              </option>
+            ))}
+          </select>
+        )}
         <div className="ml-auto flex items-center gap-3">
-          {collections.length > 0 && (
-            <select
-              value={collectionId}
-              onChange={(e) => setCollectionId(e.target.value)}
-              disabled={running}
-              className="border border-[--color-line] bg-[--color-bg] px-3 py-2 font-mono text-xs outline-none focus:border-[--color-accent]"
-            >
-              <option value="">default collection</option>
-              {collections.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name ?? c.id}
-                </option>
-              ))}
-            </select>
-          )}
-          {running ? (
-            <button
-              onClick={() => {
-                stopRef.current = true;
-              }}
-              className="border border-[--color-line] px-5 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] text-red-400 transition-colors hover:border-red-400"
-            >
-              Stop
-            </button>
+          {active ? (
+            <>
+              <button
+                onClick={() => act("pause")}
+                disabled={busy}
+                className="border border-[--color-line] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] transition-colors hover:border-amber-400 hover:text-amber-400 disabled:opacity-40"
+              >
+                Pause
+              </button>
+              <button
+                onClick={() => act("cancel")}
+                disabled={busy}
+                className="border border-[--color-line] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] text-red-400 transition-colors hover:border-red-400 disabled:opacity-40"
+              >
+                Cancel
+              </button>
+            </>
           ) : (
-            <button
-              onClick={startSync}
-              disabled={toSync === 0}
-              className="border border-[--color-accent] px-5 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] text-[--color-accent] transition-colors hover:bg-[--color-accent] hover:text-[--color-bg] disabled:opacity-40"
-            >
-              Sync {toSync > 0 ? toSync : "all"}
-            </button>
+            <>
+              {task?.status === "paused" && (
+                <button
+                  onClick={() => act("resume")}
+                  disabled={busy}
+                  className="border border-[--color-line] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] transition-colors hover:border-[--color-accent] hover:text-[--color-accent] disabled:opacity-40"
+                >
+                  Resume
+                </button>
+              )}
+              {(counts.failed ?? 0) > 0 && (
+                <button
+                  onClick={() => act("retryFailed")}
+                  disabled={busy}
+                  className="border border-[--color-line] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] transition-colors hover:border-[--color-accent] hover:text-[--color-accent] disabled:opacity-40"
+                >
+                  Retry failed
+                </button>
+              )}
+              <button
+                onClick={syncNow}
+                disabled={busy}
+                className="border border-[--color-accent] px-5 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] text-[--color-accent] transition-colors hover:bg-[--color-accent] hover:text-[--color-bg] disabled:opacity-40"
+              >
+                {scheduleMinutes ? "Save schedule & sync" : "Sync now"}
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      <ul className="mt-px max-h-[60vh] space-y-px overflow-y-auto">
-        {items.map((item) => (
-          <li
-            key={item.doc.id}
-            className="flex items-baseline gap-4 border border-[--color-line] px-4 py-2.5"
-          >
-            <span className="w-14 shrink-0 font-mono text-xs text-[--color-faint]">
-              #{item.doc.id}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-sm">{item.doc.title}</span>
-            <span className="hidden shrink-0 font-mono text-xs text-[--color-faint] md:inline">
-              {item.doc.created?.slice(0, 10)}
-            </span>
+      {/* status */}
+      {task && (
+        <div className="mt-px border border-[--color-line] bg-[--color-card] p-4">
+          <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
             <span
-              className={`w-20 shrink-0 text-right font-mono text-[10px] uppercase tracking-[0.1em] ${BADGE[item.state].cls}`}
-              title={item.detail}
+              className={`font-mono text-xs font-semibold uppercase tracking-[0.2em] ${
+                STATUS_CLS[task.status] ?? "text-[--color-muted]"
+              }`}
             >
-              {BADGE[item.state].label}
+              {task.status}
             </span>
-          </li>
-        ))}
-      </ul>
-      {counts.error > 0 && (
-        <p className="mt-3 font-mono text-xs text-red-400">
-          {items.find((i) => i.state === "error")?.detail}
+            <span className="font-mono text-xs text-[--color-muted]">{task.message}</span>
+            {task.schedule?.everyMinutes && (
+              <span className="font-mono text-xs text-[--color-faint]">
+                repeats every{" "}
+                {task.schedule.everyMinutes >= 60
+                  ? `${task.schedule.everyMinutes / 60}h`
+                  : `${task.schedule.everyMinutes}m`}
+              </span>
+            )}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 font-mono text-xs">
+            <span className="text-emerald-400">{counts.done ?? 0} synced</span>
+            <span className="text-[--color-muted]">{counts.skipped ?? 0} skipped</span>
+            <span className="text-[--color-faint]">
+              {counts.deduped ?? 0} already in cortex
+            </span>
+            {(counts.failed ?? 0) > 0 && (
+              <span className="text-red-400">{counts.failed} failed</span>
+            )}
+          </div>
+          {task.error && (
+            <p className="mt-3 font-mono text-xs text-red-400">{task.error}</p>
+          )}
+          {task.last_run?.finished_at && !active && (
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.1em] text-[--color-faint]">
+              last run {new Date(task.last_run.finished_at).toLocaleString()}
+            </p>
+          )}
+        </div>
+      )}
+
+      {!task && (
+        <p className="mt-4 font-mono text-xs text-[--color-faint]">
+          No sync has run yet. Pick a schedule (or leave it manual) and hit the
+          button — the sync runs inside Cortex and keeps going even if you
+          close this tab.
         </p>
       )}
+
+      {/* problem items */}
+      {(failedItems.length > 0 || skippedItems.length > 0) && (
+        <ul className="mt-px max-h-[40vh] space-y-px overflow-y-auto">
+          {failedItems.map((item, i) => (
+            <li
+              key={`f${i}`}
+              className="flex items-baseline gap-4 border border-[--color-line] px-4 py-2.5"
+            >
+              <span className="w-14 shrink-0 font-mono text-xs text-[--color-faint]">
+                #{String(item.vars.id ?? "?")}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm">
+                {String(item.vars.title ?? "")}
+              </span>
+              <span
+                className="max-w-[40%] shrink-0 truncate text-right font-mono text-[10px] uppercase tracking-[0.1em] text-red-400"
+                title={item.error}
+              >
+                {item.error ?? "failed"}
+              </span>
+            </li>
+          ))}
+          {skippedItems.map((item, i) => (
+            <li
+              key={`s${i}`}
+              className="flex items-baseline gap-4 border border-[--color-line] px-4 py-2.5"
+            >
+              <span className="w-14 shrink-0 font-mono text-xs text-[--color-faint]">
+                #{String(item.vars.id ?? "?")}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm text-[--color-muted]">
+                {String(item.vars.title ?? "")}
+              </span>
+              <span className="shrink-0 text-right font-mono text-[10px] uppercase tracking-[0.1em] text-[--color-faint]">
+                {item.reason ?? "skipped"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {error && <p className="mt-3 font-mono text-xs text-red-400">{error}</p>}
     </div>
   );
 }

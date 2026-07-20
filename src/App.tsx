@@ -111,7 +111,7 @@ export default function App() {
       </div>
 
       <footer className="mt-10 font-mono text-xs text-[--color-faint]">
-        POWERED BY CORTEX — RE-RUN ANYTIME, ONLY NEW DOCUMENTS ARE SYNCED
+        POWERED BY CORTEX — SYNC RUNS SERVER-SIDE, EVEN WITH THIS TAB CLOSED
       </footer>
     </div>
   );
