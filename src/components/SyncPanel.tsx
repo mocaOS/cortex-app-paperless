@@ -25,12 +25,12 @@ const SCHEDULES: Array<{ label: string; minutes?: number }> = [
 ];
 
 const STATUS_CLS: Record<string, string> = {
-  running: "text-[--color-accent]",
-  pending: "text-[--color-accent]",
+  running: "text-[var(--color-accent)]",
+  pending: "text-[var(--color-accent)]",
   paused: "text-amber-400",
   completed: "text-emerald-400",
   failed: "text-red-400",
-  cancelled: "text-[--color-muted]",
+  cancelled: "text-[var(--color-muted)]",
 };
 
 const ACTIVE = new Set(["running", "pending"]);
@@ -139,7 +139,7 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
 
   if (loading) {
     return (
-      <p className="font-mono text-xs uppercase tracking-[0.1em] text-[--color-faint]">
+      <p className="font-mono text-xs uppercase tracking-[0.1em] text-[var(--color-faint)]">
         {loading}
       </p>
     );
@@ -153,8 +153,8 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
   return (
     <div>
       {/* controls */}
-      <div className="flex flex-wrap items-center gap-3 border border-[--color-line] bg-[--color-card] p-4">
-        <span className="font-mono text-xs uppercase tracking-[0.2em] text-[--color-muted]">
+      <div className="flex flex-wrap items-center gap-3 border border-[var(--color-line)] bg-[var(--color-card)] p-4">
+        <span className="font-mono text-xs uppercase tracking-[0.2em] text-[var(--color-muted)]">
           Sync
         </span>
         <select
@@ -163,7 +163,7 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
             setScheduleMinutes(e.target.value ? Number(e.target.value) : undefined)
           }
           disabled={busy || active}
-          className="border border-[--color-line] bg-[--color-bg] px-3 py-2 font-mono text-xs outline-none focus:border-[--color-accent]"
+          className="border border-[var(--color-line)] bg-[var(--color-bg)] px-3 py-2 font-mono text-xs outline-none focus:border-[var(--color-accent)]"
         >
           {SCHEDULES.map((s) => (
             <option key={s.label} value={s.minutes ?? ""}>
@@ -176,7 +176,7 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
             value={collectionId}
             onChange={(e) => setCollectionId(e.target.value)}
             disabled={busy || active}
-            className="border border-[--color-line] bg-[--color-bg] px-3 py-2 font-mono text-xs outline-none focus:border-[--color-accent]"
+            className="border border-[var(--color-line)] bg-[var(--color-bg)] px-3 py-2 font-mono text-xs outline-none focus:border-[var(--color-accent)]"
           >
             <option value="">default collection</option>
             {collections.map((c) => (
@@ -192,14 +192,14 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
               <button
                 onClick={() => act("pause")}
                 disabled={busy}
-                className="border border-[--color-line] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] transition-colors hover:border-amber-400 hover:text-amber-400 disabled:opacity-40"
+                className="border border-[var(--color-line)] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] transition-colors hover:border-amber-400 hover:text-amber-400 disabled:opacity-40"
               >
                 Pause
               </button>
               <button
                 onClick={() => act("cancel")}
                 disabled={busy}
-                className="border border-[--color-line] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] text-red-400 transition-colors hover:border-red-400 disabled:opacity-40"
+                className="border border-[var(--color-line)] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] text-red-400 transition-colors hover:border-red-400 disabled:opacity-40"
               >
                 Cancel
               </button>
@@ -210,7 +210,7 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
                 <button
                   onClick={() => act("resume")}
                   disabled={busy}
-                  className="border border-[--color-line] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] transition-colors hover:border-[--color-accent] hover:text-[--color-accent] disabled:opacity-40"
+                  className="border border-[var(--color-line)] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-40"
                 >
                   Resume
                 </button>
@@ -219,7 +219,7 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
                 <button
                   onClick={() => act("retryFailed")}
                   disabled={busy}
-                  className="border border-[--color-line] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] transition-colors hover:border-[--color-accent] hover:text-[--color-accent] disabled:opacity-40"
+                  className="border border-[var(--color-line)] px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-40"
                 >
                   Retry failed
                 </button>
@@ -227,7 +227,7 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
               <button
                 onClick={syncNow}
                 disabled={busy}
-                className="border border-[--color-accent] px-5 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] text-[--color-accent] transition-colors hover:bg-[--color-accent] hover:text-[--color-bg] disabled:opacity-40"
+                className="border border-[var(--color-accent)] px-5 py-2 font-mono text-xs font-semibold uppercase tracking-[0.1em] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-bg)] disabled:opacity-40"
               >
                 {scheduleMinutes ? "Save schedule & sync" : "Sync now"}
               </button>
@@ -238,18 +238,18 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
 
       {/* status */}
       {task && (
-        <div className="mt-px border border-[--color-line] bg-[--color-card] p-4">
+        <div className="mt-px border border-[var(--color-line)] bg-[var(--color-card)] p-4">
           <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
             <span
               className={`font-mono text-xs font-semibold uppercase tracking-[0.2em] ${
-                STATUS_CLS[task.status] ?? "text-[--color-muted]"
+                STATUS_CLS[task.status] ?? "text-[var(--color-muted)]"
               }`}
             >
               {task.status}
             </span>
-            <span className="font-mono text-xs text-[--color-muted]">{task.message}</span>
+            <span className="font-mono text-xs text-[var(--color-muted)]">{task.message}</span>
             {task.schedule?.everyMinutes && (
-              <span className="font-mono text-xs text-[--color-faint]">
+              <span className="font-mono text-xs text-[var(--color-faint)]">
                 repeats every{" "}
                 {task.schedule.everyMinutes >= 60
                   ? `${task.schedule.everyMinutes / 60}h`
@@ -259,8 +259,8 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
           </div>
           <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 font-mono text-xs">
             <span className="text-emerald-400">{counts.done ?? 0} synced</span>
-            <span className="text-[--color-muted]">{counts.skipped ?? 0} skipped</span>
-            <span className="text-[--color-faint]">
+            <span className="text-[var(--color-muted)]">{counts.skipped ?? 0} skipped</span>
+            <span className="text-[var(--color-faint)]">
               {counts.deduped ?? 0} already in cortex
             </span>
             {(counts.failed ?? 0) > 0 && (
@@ -271,7 +271,7 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
             <p className="mt-3 font-mono text-xs text-red-400">{task.error}</p>
           )}
           {task.last_run?.finished_at && !active && (
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.1em] text-[--color-faint]">
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-faint)]">
               last run {new Date(task.last_run.finished_at).toLocaleString()}
             </p>
           )}
@@ -279,7 +279,7 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
       )}
 
       {!task && (
-        <p className="mt-4 font-mono text-xs text-[--color-faint]">
+        <p className="mt-4 font-mono text-xs text-[var(--color-faint)]">
           No sync has run yet. Pick a schedule (or leave it manual) and hit the
           button — the sync runs inside Cortex and keeps going even if you
           close this tab.
@@ -292,9 +292,9 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
           {failedItems.map((item, i) => (
             <li
               key={`f${i}`}
-              className="flex items-baseline gap-4 border border-[--color-line] px-4 py-2.5"
+              className="flex items-baseline gap-4 border border-[var(--color-line)] px-4 py-2.5"
             >
-              <span className="w-14 shrink-0 font-mono text-xs text-[--color-faint]">
+              <span className="w-14 shrink-0 font-mono text-xs text-[var(--color-faint)]">
                 #{String(item.vars.id ?? "?")}
               </span>
               <span className="min-w-0 flex-1 truncate text-sm">
@@ -311,15 +311,15 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
           {skippedItems.map((item, i) => (
             <li
               key={`s${i}`}
-              className="flex items-baseline gap-4 border border-[--color-line] px-4 py-2.5"
+              className="flex items-baseline gap-4 border border-[var(--color-line)] px-4 py-2.5"
             >
-              <span className="w-14 shrink-0 font-mono text-xs text-[--color-faint]">
+              <span className="w-14 shrink-0 font-mono text-xs text-[var(--color-faint)]">
                 #{String(item.vars.id ?? "?")}
               </span>
-              <span className="min-w-0 flex-1 truncate text-sm text-[--color-muted]">
+              <span className="min-w-0 flex-1 truncate text-sm text-[var(--color-muted)]">
                 {String(item.vars.title ?? "")}
               </span>
-              <span className="shrink-0 text-right font-mono text-[10px] uppercase tracking-[0.1em] text-[--color-faint]">
+              <span className="shrink-0 text-right font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-faint)]">
                 {item.reason ?? "skipped"}
               </span>
             </li>
