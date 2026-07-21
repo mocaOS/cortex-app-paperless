@@ -1,0 +1,53 @@
+# Release automation — ships with the template, inherited by every app.
+#
+# Releasing becomes:  git tag v1.0.0 && git push --tags
+#
+# The workflow builds from the tagged source, validates, packages the zip,
+# and publishes a GitHub release with the artifact attached and its sha256
+# in the notes — exactly the fields a cortex-registry listing pins.
+# Afterwards, publish/update your listing with one command in the registry:
+#   node scripts/add-listing.mjs <the printed asset url>
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build, validate, package
+        run: npm run package
+      - name: Verify tag matches app.json version
+        run: |
+          VERSION=$(node -p "require('./app.json').version")
+          [ "v$VERSION" = "$GITHUB_REF_NAME" ] || {
+            echo "::error::tag $GITHUB_REF_NAME != app.json version v$VERSION"; exit 1; }
+      - name: Publish release with artifact + sha256
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ID=$(node -p "require('./app.json').id")
+          VERSION=$(node -p "require('./app.json').version")
+          NAME=$(node -p "require('./app.json').name")
+          ZIP="${ID}-${VERSION}.zip"
+          SHA=$(sha256sum "$ZIP" | cut -d' ' -f1)
+          SIZE=$(stat -c %s "$ZIP")
+          gh release create "$GITHUB_REF_NAME" "$ZIP" \
+            --title "$NAME v$VERSION" \
+            --notes "**Artifact:** \`$ZIP\` ($SIZE bytes)
+          **sha256:** \`$SHA\`
+
+          Install: Cortex admin → Settings → Apps (zip upload or Browse Registry once listed)."
+          echo "### $NAME v$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "sha256: \`$SHA\` · size: $SIZE bytes" >> "$GITHUB_STEP_SUMMARY"
