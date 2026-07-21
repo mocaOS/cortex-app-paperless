@@ -2,9 +2,9 @@
   "$schema": "./schema/app.v1.json",
   "id": "paperless-sync",
   "name": "Paperless Sync",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "platform",
-  "description": "Sync your paperless-ngx document archive into the Cortex knowledge graph \u2014 on demand or on a schedule, fully server-side",
+  "description": "Sync your paperless-ngx document archive into the Cortex knowledge graph — the full original documents, on demand or on a schedule, fully server-side",
   "publisher": {
     "name": "reneil",
     "url": "https://github.com/mocaOS"
@@ -12,7 +12,7 @@
   "icon": "icon.svg",
   "entry": "index.html",
   "cortex": {
-    "minVersion": "2.0.0",
+    "minVersion": "2.1.0",
     "keyScope": "read_write",
     "endpoints": [
       "upload",

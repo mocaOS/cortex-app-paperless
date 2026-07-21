@@ -4,21 +4,26 @@
  * Instead of a browser-side loop, the whole paperless → Cortex pipeline is a
  * declarative step-queue that Cortex executes server-side:
  *
- *   setup    read the sync cursor, list documents added since it (paginated),
- *            fetch correspondent/type name maps (keyBy joins)
+ *   setup    read the sync cursor, list documents added since it (paginated)
  *   items    fan out over the listing, deduped against storage keys
  *            (synced/{id}) so nothing is ever uploaded twice
- *   steps    fetch full text → skip if empty → render markdown → multipart
- *            upload into Cortex → mark synced
+ *   steps    binary passthrough upload — Cortex downloads the actual
+ *            document from paperless (/api/documents/{id}/download/, the
+ *            OCR'd archive PDF when one exists, the original upload
+ *            otherwise) and streams it straight into /api/upload → mark
+ *            synced
  *   finally  advance the cursor (only when nothing failed, so failed
  *            documents are retried by the next run)
  *
  * Submit it once with a schedule and the sync runs forever, headless —
  * the browser tab is just a dashboard.
  *
- * Deliberate difference from the old client loop: tag names are not resolved
- * (a doc has a LIST of tag ids, which the template language can't map);
- * correspondent and document type are single ids and ARE resolved by name.
+ * Since v0.4.0 Cortex ingests the FULL document, not a markdown re-render
+ * of paperless's extracted text: Docling parses the real PDF (layout,
+ * tables, images), so the graph sees everything — not just the OCR layer.
+ * Paperless-side metadata (correspondent/type names) no longer rides along;
+ * the document itself carries its content, and the paperless id + title
+ * stay in the filename.
  */
 
 import { listCortexDocuments } from "./cortex";
@@ -55,81 +60,39 @@ export function buildSyncTask(opts: SyncTaskOptions): Record<string, unknown> {
           method: "GET",
           url:
             `${base}/api/documents/?ordering=-added&page_size=100` +
-            `&fields=id,title,created,added,correspondent,document_type,archive_serial_number,original_file_name` +
+            `&fields=id,title,added,archived_file_name,original_file_name` +
             `&added__gt={cursor.value|default:1970-01-01T00:00:00Z|urlencode}`,
           paginate: { items: "results", next: "next", maxPages: 50 },
-        },
-      },
-      {
-        id: "correspondents",
-        http: {
-          method: "GET",
-          url: `${base}/api/correspondents/?page_size=100`,
-          paginate: { items: "results", next: "next", keyBy: "id" },
-        },
-      },
-      {
-        id: "doctypes",
-        http: {
-          method: "GET",
-          url: `${base}/api/document_types/?page_size=100`,
-          paginate: { items: "results", next: "next", keyBy: "id" },
         },
       },
     ],
     items: {
       from: "$setup.docs.items",
-      vars: { id: "{item.id}", title: "{item.title}", added: "{item.added}" },
+      vars: {
+        id: "{item.id}",
+        title: "{item.title}",
+        added: "{item.added}",
+        // real filename → correct extension → correct Docling parser.
+        // /download/ serves the archive PDF when one exists, else the
+        // original — mirror that preference for the name.
+        filename:
+          "{item.archived_file_name|default:{item.original_file_name}|default:{item.title|slug}.pdf}",
+      },
       skipIfStored: "synced/{item.id}",
     },
     steps: [
-      { id: "full", http: { method: "GET", url: `${base}/api/documents/{vars.id}/` } },
-      {
-        skipItem: {
-          when: { empty: "$full.body.content" },
-          reason: "no extracted text in paperless",
-        },
-      },
-      {
-        id: "md",
-        template: {
-          lines: [
-            "# {full.body.title}",
-            "",
-            `- Source: paperless-ngx document {vars.id} (${base}/documents/{vars.id}/)`,
-            "- Created: {full.body.created|truncate:10}",
-            {
-              text: "- Correspondent: {setup.correspondents.map.{full.body.correspondent}.name}",
-              when: { notEmpty: "$setup.correspondents.map.{full.body.correspondent}.name" },
-            },
-            {
-              text: "- Type: {setup.doctypes.map.{full.body.document_type}.name}",
-              when: { notEmpty: "$setup.doctypes.map.{full.body.document_type}.name" },
-            },
-            {
-              text: "- Archive serial: {full.body.archive_serial_number}",
-              when: { notEmpty: "$full.body.archive_serial_number" },
-            },
-            {
-              text: "- Original file: {full.body.original_file_name}",
-              when: { notEmpty: "$full.body.original_file_name" },
-            },
-            "",
-            "---",
-            "",
-            "{full.body.content}",
-          ],
-        },
-      },
+      // binary passthrough: Cortex downloads the actual document from
+      // paperless server-side (PAPERLESS_TOKEN injected from config) and
+      // streams the bytes straight into the upload — full PDF, not a
+      // markdown re-render of the OCR text
       {
         id: "up",
         cortex: {
           method: "POST",
           path: `upload?${uploadParams.toString()}`,
           multipart: {
-            content: "$md.text",
-            filename: "paperless-{vars.id}-{vars.title|slug}.md",
-            contentType: "text/markdown",
+            fromUrl: `${base}/api/documents/{vars.id}/download/`,
+            filename: "paperless-{vars.id}-{vars.filename}",
           },
         },
       },
@@ -138,7 +101,8 @@ export function buildSyncTask(opts: SyncTaskOptions): Record<string, unknown> {
           put: "synced/{vars.id}",
           value: {
             at: "{run.startedAt}",
-            filename: "paperless-{vars.id}-{vars.title|slug}.md",
+            filename: "paperless-{vars.id}-{vars.filename}",
+            docId: "{up.body.document_id}",
           },
         },
       },

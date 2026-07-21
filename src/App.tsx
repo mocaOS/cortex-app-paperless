@@ -44,9 +44,10 @@ export default function App() {
           Paperless Sync
         </h1>
         <p className="mt-4 max-w-xl text-[var(--color-muted)]">
-          Bring your paperless-ngx archive into the knowledge graph. Paperless
-          has already extracted the text — syncing ships it as markdown, so
-          documents become searchable knowledge in seconds, not OCR-minutes.
+          Bring your paperless-ngx archive into the knowledge graph. Syncing
+          ships the full documents — Cortex parses the real PDFs (layout,
+          tables, images), so the graph sees everything, not just the OCR
+          text layer.
         </p>
       </header>
 

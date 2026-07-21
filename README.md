@@ -4,11 +4,23 @@ Sync your [paperless-ngx](https://docs.paperless-ngx.com/) document archive
 into the [Cortex](https://github.com/mocaOS/cortex-app) knowledge graph —
 on demand or on a schedule, fully server-side.
 
-Paperless has already OCR'd and extracted the text of every document — this
-app ships that text into Cortex as markdown (with title, correspondent, type,
-dates, and a backlink to the paperless document), so your archive becomes
-searchable, graph-connected knowledge in seconds per document instead of
-re-running OCR.
+This app ships the **full documents** into Cortex: for each paperless
+document it downloads the archived PDF (paperless's OCR'd, text-layered
+version — or the original upload when no archive exists) and streams it
+straight into Cortex ingestion. Docling parses the real document — layout,
+tables, images — so your graph sees everything, not just the extracted text.
+The paperless id and title stay in the Cortex filename
+(`paperless-{id}-{filename}`).
+
+> Requires a Cortex instance with binary passthrough upload (cortex-app
+> ≥ 2.1 / July 2026 platform extensions). Documents larger than ~19 MB fail
+> the transfer cap and surface as failed items.
+>
+> Upgrading from ≤ 0.3.x: already-synced documents keep their markdown
+> version (the dedup state protects them from re-upload). To re-ingest an
+> existing archive as full documents, delete the old markdown documents in
+> Cortex and uninstall + reinstall the app (uninstalling clears the app's
+> sync state), then run a fresh sync.
 
 Built from [cortex-app-template](https://github.com/mocaOS/cortex-app-template).
 Type: `platform` — the sync itself runs **inside Cortex** as a declarative
@@ -33,12 +45,14 @@ it a schedule and it becomes a standing sync daemon with no browser anywhere.
 The app submits one declarative task (`tasks` capability) that Cortex
 executes in its own async loop:
 
-- **setup** — reads the sync cursor from app storage, lists documents added
-  since it (paginated), and fetches correspondent/type name maps
-- **per document** (2 in flight, per-item error isolation) — fetches the
-  extracted text, skips documents without any, renders markdown, uploads it
-  via `POST /api/upload` (`source=paperless-sync`), and marks the document
-  synced in app storage (`synced/{id}`) so it is never uploaded twice
+- **setup** — reads the sync cursor from app storage and lists documents
+  added since it (paginated)
+- **per document** (2 in flight, per-item error isolation) — a binary
+  passthrough upload: Cortex downloads `/api/documents/{id}/download/`
+  server-side (token injected from encrypted config; bytes never touch a
+  browser) and streams it into `POST /api/upload` (`source=paperless-sync`),
+  then marks the document synced in app storage (`synced/{id}`) so it is
+  never uploaded twice
 - **finally** — advances the cursor, but only when nothing failed, so failed
   documents are retried by the next run
 
