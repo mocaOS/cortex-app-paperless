@@ -8,11 +8,15 @@
  *            OLDEST FIRST, capped at one batch (BATCH_PAGES pages) per run
  *   items    fan out over the listing, deduped against storage keys
  *            (synced/{id}) so nothing is ever uploaded twice
- *   steps    binary passthrough upload — Cortex downloads the actual
- *            document from paperless (/api/documents/{id}/download/, the
- *            OCR'd archive PDF when one exists, the original upload
- *            otherwise) and streams it straight into /api/upload → mark
- *            synced
+ *   steps    guards first — a document whose filename extension Cortex
+ *            ingestion doesn't accept, or whose file exceeds the platform's
+ *            20 MB transfer cap, is marked handled in storage and SKIPPED
+ *            (visible reason in the panel). Skips don't count as failures,
+ *            so they can never wedge the cursor. Then the binary
+ *            passthrough upload — Cortex downloads the actual document
+ *            from paperless (/api/documents/{id}/download/, the OCR'd
+ *            archive PDF when one exists, the original upload otherwise)
+ *            and streams it straight into /api/upload → mark synced
  *   finally  advance the cursor to the last listed document (only when
  *            nothing failed, so failed documents are retried by the next
  *            run)
@@ -48,6 +52,35 @@ const BATCH_PAGES = 20;
 /** Max documents one run can list — when a run's total+deduped reaches this,
  * the listing was truncated and another run is needed to drain the rest. */
 export const BATCH_LIMIT = PAGE_SIZE * BATCH_PAGES;
+
+// Extensions Cortex ingestion accepts (backend allowed_extensions). Space-
+// padded so a `contains` check on " {ext} " can't match a substring of
+// another entry. A document that would 400 on upload is a PERMANENT failure,
+// and permanent failures must skip, not fail — a failed item keeps the
+// cursor from advancing, deadlocking the sync on the same batch forever.
+const SUPPORTED_EXTS =
+  " pdf docx doc xlsx xls pptx ppt html htm txt md mdx markdown rst" +
+  " png jpg jpeg tiff tif bmp wav mp3 webvtt vtt tex latex xml epub ";
+
+// The platform buffers a fromUrl fetch and rejects responses over 20 MB;
+// guard a bit under it so those documents skip instead of failing mid-run.
+const TRANSFER_CAP_BYTES = 19_000_000;
+
+// no extension at all also 400s on upload ("" resolves to no suffix)
+const UNSUPPORTED_TYPE = {
+  or: [
+    { eq: ["{vars.filename|ext}", ""] },
+    { not: { contains: [SUPPORTED_EXTS, " {vars.filename|ext} "] } },
+  ],
+};
+
+// /download/ serves the archive when one exists — mirror that for the size
+const OVERSIZED = {
+  gt: [
+    "{meta.body.archive_size|default:{meta.body.original_size}}",
+    TRANSFER_CAP_BYTES,
+  ],
+};
 
 export interface SyncTaskOptions {
   /** paperless base URL (already trailing-slash-stripped) */
@@ -102,6 +135,48 @@ export function buildSyncTask(opts: SyncTaskOptions): Record<string, unknown> {
       skipIfStored: "synced/{item.id}",
     },
     steps: [
+      // guard: file type Cortex can't ingest (e.g. a paperless original
+      // named "…._1" with no archive PDF) → record it under synced/{id} so
+      // every later run dedups it, then skip with a visible reason
+      {
+        store: {
+          put: "synced/{vars.id}",
+          value: {
+            at: "{run.startedAt}",
+            filename: "{vars.filename}",
+            skipped: "unsupported file type",
+          },
+        },
+        when: UNSUPPORTED_TYPE,
+      },
+      {
+        skipItem: {
+          when: UNSUPPORTED_TYPE,
+          reason: "unsupported file type: {vars.filename}",
+        },
+      },
+      // guard: the platform rejects transfers over 20 MB — one metadata
+      // call tells us the download size up front, oversized docs skip
+      { id: "meta", http: { method: "GET", url: `${base}/api/documents/{vars.id}/metadata/` } },
+      {
+        store: {
+          put: "synced/{vars.id}",
+          value: {
+            at: "{run.startedAt}",
+            filename: "{vars.filename}",
+            skipped: "exceeds transfer cap",
+          },
+        },
+        when: OVERSIZED,
+      },
+      {
+        skipItem: {
+          when: OVERSIZED,
+          reason:
+            "{meta.body.archive_size|default:{meta.body.original_size}} bytes — " +
+            "exceeds the platform's 20 MB transfer cap",
+        },
+      },
       // binary passthrough: Cortex downloads the actual document from
       // paperless server-side (PAPERLESS_TOKEN injected from config) and
       // streams the bytes straight into the upload — full PDF, not a

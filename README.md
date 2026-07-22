@@ -13,8 +13,10 @@ The paperless id and title stay in the Cortex filename
 (`paperless-{id}-{filename}`).
 
 > Requires a Cortex instance with binary passthrough upload (cortex-app
-> ≥ 2.1 / July 2026 platform extensions). Documents larger than ~19 MB fail
-> the transfer cap and surface as failed items.
+> ≥ 2.1 / July 2026 platform extensions). Documents the platform can't
+> carry — file types Cortex ingestion doesn't accept, or files over the
+> 20 MB transfer cap — are skipped with a visible reason and marked
+> handled, so they never block the rest of the archive.
 >
 > Upgrading from ≤ 0.3.x: already-synced documents keep their markdown
 > version (the dedup state protects them from re-upload). To re-ingest an
@@ -49,12 +51,15 @@ executes in its own async loop:
   added since it, oldest first, capped at 2000 per run (the platform's
   fan-out limit) — larger archives drain batch by batch across runs, and
   the UI says so when a run hits the cap
-- **per document** (2 in flight, per-item error isolation) — a binary
-  passthrough upload: Cortex downloads `/api/documents/{id}/download/`
-  server-side (token injected from encrypted config; bytes never touch a
-  browser) and streams it into `POST /api/upload` (`source=paperless-sync`),
-  then marks the document synced in app storage (`synced/{id}`) so it is
-  never uploaded twice
+- **per document** (2 in flight, per-item error isolation) — guards first:
+  an unsupported file type or a file over the 20 MB transfer cap is marked
+  handled and *skipped* (skips never block the cursor — only transient
+  failures do, and those retry next run). Then a binary passthrough upload:
+  Cortex downloads `/api/documents/{id}/download/` server-side (token
+  injected from encrypted config; bytes never touch a browser) and streams
+  it into `POST /api/upload` (`source=paperless-sync`), then marks the
+  document synced in app storage (`synced/{id}`) so it is never uploaded
+  twice
 - **finally** — advances the cursor past the listed batch, but only when
   nothing failed, so failed documents are retried by the next run
 
