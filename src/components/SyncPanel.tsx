@@ -10,12 +10,14 @@ import {
   type TaskItem,
 } from "../lib/platform";
 import {
+  APP_VERSION,
   BATCH_LIMIT,
   buildSyncTask,
   loadPrefs,
   savePrefs,
   seedDedupKeysOnce,
   SYNC_TASK_NAME,
+  taskDefinitionVersion,
 } from "../lib/syncTask";
 
 const SCHEDULES: Array<{ label: string; minutes?: number }> = [
@@ -43,6 +45,7 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
   const [scheduleMinutes, setScheduleMinutes] = useState<number | undefined>(undefined);
   const [loading, setLoading] = useState<string | null>("loading…");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<number | null>(null);
 
@@ -74,7 +77,31 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
         setCollections(cols);
         setCollectionId(prefs.collectionId ?? "");
         setScheduleMinutes(prefs.everyMinutes);
-        await refresh();
+        const detail = await refresh();
+        // a task definition keeps running server-side after the app is
+        // updated — silently re-running outdated logic on its schedule.
+        // When the stored task came from an older build and is idle,
+        // upgrade it in place (delete + resubmit with the same prefs).
+        if (
+          detail &&
+          !ACTIVE.has(detail.status) &&
+          taskDefinitionVersion(detail.definition) !== APP_VERSION
+        ) {
+          await deleteTask(detail.task_id);
+          await submitTask(
+            buildSyncTask({
+              baseUrl,
+              collectionId: prefs.collectionId || undefined,
+              everyMinutes: prefs.everyMinutes,
+            }),
+          );
+          if (!cancelled) {
+            setNotice(
+              `sync task was submitted by an older app build — upgraded to v${APP_VERSION} and restarted`,
+            );
+          }
+          await refresh();
+        }
         setLoading(null);
       } catch (err) {
         if (!cancelled) {
@@ -86,7 +113,7 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
     return () => {
       cancelled = true;
     };
-  }, [refresh]);
+  }, [refresh, baseUrl]);
 
   // poll while a run is active
   useEffect(() => {
@@ -152,6 +179,8 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
   // means the archive has more pending than one run can carry
   const batchFull =
     (counts.total ?? 0) + (counts.deduped ?? 0) >= BATCH_LIMIT;
+  const staleDefinition =
+    task !== null && taskDefinitionVersion(task.definition) !== APP_VERSION;
   const failedItems: TaskItem[] = (task?.items ?? []).filter((i) => i.status === "failed");
   const skippedItems: TaskItem[] = (task?.items ?? []).filter((i) => i.status === "skipped");
 
@@ -275,6 +304,13 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
           {task.error && (
             <p className="mt-3 font-mono text-xs text-red-400">{task.error}</p>
           )}
+          {staleDefinition && active && (
+            <p className="mt-3 font-mono text-xs text-amber-400">
+              this run was started by an older version of this app — it will
+              be upgraded to v{APP_VERSION} automatically once it finishes
+              (reload this page or hit Sync)
+            </p>
+          )}
           {batchFull && !active && (
             <p className="mt-3 font-mono text-xs text-amber-400">
               batch limit reached ({BATCH_LIMIT} documents per run) — more are
@@ -340,6 +376,9 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
         </ul>
       )}
 
+      {notice && (
+        <p className="mt-3 font-mono text-xs text-[var(--color-accent)]">{notice}</p>
+      )}
       {error && <p className="mt-3 font-mono text-xs text-red-400">{error}</p>}
     </div>
   );

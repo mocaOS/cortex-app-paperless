@@ -101,6 +101,22 @@ if (manifest) {
   }
 }
 
+// ---------- 1b. APP_VERSION stamp ----------
+// syncTask.ts stamps its APP_VERSION into every submitted task so the panel
+// can detect (and upgrade) definitions left behind by older builds — the
+// stamp is only trustworthy if it matches the manifest version.
+if (manifest) {
+  const syncTaskPath = join(root, "src/lib/syncTask.ts");
+  const stamp = existsSync(syncTaskPath)
+    ? readFileSync(syncTaskPath, "utf8").match(/APP_VERSION = "([^"]+)"/)?.[1]
+    : undefined;
+  if (stamp !== manifest.version) {
+    issues.push(
+      `src/lib/syncTask.ts: APP_VERSION (${JSON.stringify(stamp)}) must equal app.json "version" (${JSON.stringify(manifest.version)})`,
+    );
+  }
+}
+
 // ---------- 2–4. source scans ----------
 const SCAN_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".html", ".css", ".mjs"]);
 const files = [];

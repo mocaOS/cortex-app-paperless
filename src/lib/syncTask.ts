@@ -43,6 +43,21 @@ import { storageGet, storageKeys, storagePut } from "./platform";
 
 export const SYNC_TASK_NAME = "paperless-sync";
 
+// Kept in lock-step with app.json "version" — scripts/validate.mjs fails the
+// release build when they drift. The value is stamped into the submitted
+// task (setup step "appVersion"): a task definition lives ON in Cortex after
+// the app is updated, silently re-running old logic on its schedule, so the
+// panel compares this stamp and resubmits stale tasks automatically.
+export const APP_VERSION = "0.4.3";
+
+/** The app version that submitted a task definition (null for pre-0.4.3). */
+export function taskDefinitionVersion(definition: unknown): string | null {
+  const setup = (
+    definition as { setup?: Array<{ id?: string; template?: { text?: string } }> } | null
+  )?.setup;
+  return setup?.find((s) => s.id === "appVersion")?.template?.text ?? null;
+}
+
 // One run handles at most BATCH_PAGES × PAGE_SIZE documents — sized to the
 // platform's 2000-item fan-out cap. The cursor in `finally` advances only
 // past the listed batch, so larger backlogs drain across runs.
@@ -104,6 +119,9 @@ export function buildSyncTask(opts: SyncTaskOptions): Record<string, unknown> {
     ...(opts.everyMinutes ? { schedule: { everyMinutes: opts.everyMinutes } } : {}),
     concurrency: 2,
     setup: [
+      // version stamp — no runtime effect; lets the panel detect a task
+      // submitted by an older app build (see taskDefinitionVersion)
+      { id: "appVersion", template: { text: APP_VERSION } },
       { id: "cursor", store: { get: "sync/cursor" } },
       {
         id: "docs",

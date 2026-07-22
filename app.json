@@ -2,7 +2,7 @@
   "$schema": "./schema/app.v1.json",
   "id": "paperless-sync",
   "name": "Paperless Sync",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "type": "platform",
   "description": "Sync your paperless-ngx document archive into the Cortex knowledge graph — the full original documents, on demand or on a schedule, fully server-side",
   "publisher": {
