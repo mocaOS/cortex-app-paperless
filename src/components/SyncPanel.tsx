@@ -10,6 +10,7 @@ import {
   type TaskItem,
 } from "../lib/platform";
 import {
+  BATCH_LIMIT,
   buildSyncTask,
   loadPrefs,
   savePrefs,
@@ -147,6 +148,10 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
 
   const counts = task?.counts ?? {};
   const active = task ? ACTIVE.has(task.status) : false;
+  // total (fanned out) + deduped = documents listed; hitting the batch cap
+  // means the archive has more pending than one run can carry
+  const batchFull =
+    (counts.total ?? 0) + (counts.deduped ?? 0) >= BATCH_LIMIT;
   const failedItems: TaskItem[] = (task?.items ?? []).filter((i) => i.status === "failed");
   const skippedItems: TaskItem[] = (task?.items ?? []).filter((i) => i.status === "skipped");
 
@@ -269,6 +274,14 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
           </div>
           {task.error && (
             <p className="mt-3 font-mono text-xs text-red-400">{task.error}</p>
+          )}
+          {batchFull && !active && (
+            <p className="mt-3 font-mono text-xs text-amber-400">
+              batch limit reached ({BATCH_LIMIT} documents per run) — more are
+              pending; {task.schedule?.everyMinutes
+                ? "the next scheduled run continues where this one stopped"
+                : "hit Sync again to continue where this run stopped"}
+            </p>
           )}
           {task.last_run?.finished_at && !active && (
             <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-faint)]">

@@ -46,15 +46,17 @@ The app submits one declarative task (`tasks` capability) that Cortex
 executes in its own async loop:
 
 - **setup** — reads the sync cursor from app storage and lists documents
-  added since it (paginated)
+  added since it, oldest first, capped at 2000 per run (the platform's
+  fan-out limit) — larger archives drain batch by batch across runs, and
+  the UI says so when a run hits the cap
 - **per document** (2 in flight, per-item error isolation) — a binary
   passthrough upload: Cortex downloads `/api/documents/{id}/download/`
   server-side (token injected from encrypted config; bytes never touch a
   browser) and streams it into `POST /api/upload` (`source=paperless-sync`),
   then marks the document synced in app storage (`synced/{id}`) so it is
   never uploaded twice
-- **finally** — advances the cursor, but only when nothing failed, so failed
-  documents are retried by the next run
+- **finally** — advances the cursor past the listed batch, but only when
+  nothing failed, so failed documents are retried by the next run
 
 With a schedule (`every hour` / `6 hours` / `daily`), Cortex re-runs the
 task on its own. The app UI is just a dashboard: live progress, pause /

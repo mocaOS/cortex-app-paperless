@@ -4,7 +4,8 @@
  * Instead of a browser-side loop, the whole paperless → Cortex pipeline is a
  * declarative step-queue that Cortex executes server-side:
  *
- *   setup    read the sync cursor, list documents added since it (paginated)
+ *   setup    read the sync cursor, list documents added since it —
+ *            OLDEST FIRST, capped at one batch (BATCH_PAGES pages) per run
  *   items    fan out over the listing, deduped against storage keys
  *            (synced/{id}) so nothing is ever uploaded twice
  *   steps    binary passthrough upload — Cortex downloads the actual
@@ -12,8 +13,15 @@
  *            OCR'd archive PDF when one exists, the original upload
  *            otherwise) and streams it straight into /api/upload → mark
  *            synced
- *   finally  advance the cursor (only when nothing failed, so failed
- *            documents are retried by the next run)
+ *   finally  advance the cursor to the last listed document (only when
+ *            nothing failed, so failed documents are retried by the next
+ *            run)
+ *
+ * Batching (v0.4.1): the platform caps a fan-out at 2000 items, so one run
+ * syncs at most one batch and the cursor advances only past that batch —
+ * archives of any size drain across consecutive (scheduled or manual) runs.
+ * The cursor filter is added__gte + dedup, not __gt, so documents sharing
+ * the boundary timestamp are re-listed and skipped instead of lost.
  *
  * Submit it once with a schedule and the sync runs forever, headless —
  * the browser tab is just a dashboard.
@@ -30,6 +38,16 @@ import { listCortexDocuments } from "./cortex";
 import { storageGet, storageKeys, storagePut } from "./platform";
 
 export const SYNC_TASK_NAME = "paperless-sync";
+
+// One run handles at most BATCH_PAGES × PAGE_SIZE documents — sized to the
+// platform's 2000-item fan-out cap. The cursor in `finally` advances only
+// past the listed batch, so larger backlogs drain across runs.
+const PAGE_SIZE = 100;
+const BATCH_PAGES = 20;
+
+/** Max documents one run can list — when a run's total+deduped reaches this,
+ * the listing was truncated and another run is needed to drain the rest. */
+export const BATCH_LIMIT = PAGE_SIZE * BATCH_PAGES;
 
 export interface SyncTaskOptions {
   /** paperless base URL (already trailing-slash-stripped) */
@@ -58,11 +76,14 @@ export function buildSyncTask(opts: SyncTaskOptions): Record<string, unknown> {
         id: "docs",
         http: {
           method: "GET",
+          // oldest first: the batch is the OLDEST pending documents, so the
+          // cursor can safely advance past it. __gte (not __gt) + dedup keeps
+          // documents that share the boundary timestamp from being skipped.
           url:
-            `${base}/api/documents/?ordering=-added&page_size=100` +
+            `${base}/api/documents/?ordering=added&page_size=${PAGE_SIZE}` +
             `&fields=id,title,added,archived_file_name,original_file_name` +
-            `&added__gt={cursor.value|default:1970-01-01T00:00:00Z|urlencode}`,
-          paginate: { items: "results", next: "next", maxPages: 50 },
+            `&added__gte={cursor.value|default:1970-01-01T00:00:00Z|urlencode}`,
+          paginate: { items: "results", next: "next", maxPages: BATCH_PAGES },
         },
       },
     ],
@@ -108,8 +129,11 @@ export function buildSyncTask(opts: SyncTaskOptions): Record<string, unknown> {
       },
     ],
     finally: [
+      // ordering=added → the LAST listed item is the newest of this batch;
+      // advancing only to it (not to paperless's overall newest) is what
+      // makes >1-batch backlogs drain instead of being skipped
       {
-        store: { put: "sync/cursor", value: "{setup.docs.items.0.added}" },
+        store: { put: "sync/cursor", value: "{setup.docs.items.-1.added}" },
         when: {
           and: [
             { eq: ["$run.failedCount", 0] },
