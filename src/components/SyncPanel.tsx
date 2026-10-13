@@ -16,6 +16,7 @@ import {
   loadPrefs,
   savePrefs,
   seedDedupKeysOnce,
+  seedDocmapOnce,
   SYNC_TASK_NAME,
   taskDefinitionVersion,
 } from "../lib/syncTask";
@@ -61,9 +62,10 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
     return detail;
   }, []);
 
-  // initial load: prefs + collections + existing task + one-time dedup seed
-  // (documents synced by the pre-task version of this app are recognized via
-  // their filenames and marked in storage so they're never re-uploaded)
+  // initial load: prefs + collections + existing task + one-time dedup and
+  // docmap seeds (documents synced by older versions of this app are
+  // recognized via their filenames: never re-uploaded as new documents,
+  // and edits replace them in place)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -73,6 +75,9 @@ export default function SyncPanel({ baseUrl }: { baseUrl: string }) {
           listCollections().catch(() => [] as CortexCollection[]),
         ]);
         await seedDedupKeysOnce();
+        // before a stale task is upgraded below: replace-in-place needs the
+        // Cortex document id of everything synced by pre-0.5.0 builds
+        await seedDocmapOnce();
         if (cancelled) return;
         setCollections(cols);
         setCollectionId(prefs.collectionId ?? "");

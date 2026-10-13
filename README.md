@@ -48,7 +48,7 @@ The app submits one declarative task (`tasks` capability) that Cortex
 executes in its own async loop:
 
 - **setup** — reads the sync cursor from app storage and lists documents
-  added since it, oldest first, capped at 2000 per run (the platform's
+  added *or edited* since it (`modified`), oldest first, capped at 2000 per run (the platform's
   fan-out limit) — larger archives drain batch by batch across runs, and
   the UI says so when a run hits the cap
 - **per document** (2 in flight, per-item error isolation) — guards first:
@@ -58,8 +58,17 @@ executes in its own async loop:
   Cortex downloads `/api/documents/{id}/download/` server-side (token
   injected from encrypted config; bytes never touch a browser) and streams
   it into `POST /api/upload` (`source=paperless-sync`), then marks the
-  document synced in app storage (`synced/{id}`) so it is never uploaded
-  twice
+  document synced in app storage (`synced/{id}:{modified}`) so an unchanged
+  document is never uploaded twice. A document edited in paperless
+  **replaces its Cortex document in place** (stable `source_key` + the
+  previous document id from `docmap/{id}`): same document id, only the
+  changed parts re-extracted. Since v0.5.0 — earlier versions never
+  re-synced edits. Upgrading seeds `docmap/` from existing
+  `paperless-{id}-…` filenames and starts the modified cursor at the old
+  added cursor, so documents touched since then re-upload once into their
+  existing document (a no-op in Cortex when the bytes are identical). On a
+  Cortex backend without in-place replace, an edit uploads a new document
+  and the previous one is deleted
 - **finally** — advances the cursor past the listed batch, but only when
   nothing failed, so failed documents are retried by the next run
 
